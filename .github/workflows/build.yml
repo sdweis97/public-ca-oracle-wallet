@@ -1,0 +1,18 @@
+name: Build Wallet
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: 
+      image: gvenzl/oracle-xe:21
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Work in progress
+        run: echo Hello, world!
+      
