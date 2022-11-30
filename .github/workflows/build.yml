@@ -15,7 +15,7 @@ jobs:
       - name: Work in progress
         run: pwd && ls && whoami && echo Hello, world!
       - name: Download Amazon bundle
-        run: wget https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+        run: curl https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -O global-bundle.pem
       - name: Build a wallet
         run: |
            csplit global-bundle.pem '/-----BEGIN CERTIFICATE-----/' '{*}'
