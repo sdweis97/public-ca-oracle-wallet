@@ -39,13 +39,13 @@ jobs:
         run: |
            csplit global-bundle.pem '/-----BEGIN CERTIFICATE-----/' '{*}' && rm xx00
            ls -lah
-           for f in $(ls -1 xx*); do echo $f && orapki wallet add -wallet /tmp/public_wallet -trusted_cert -cert $f; done    
+           for f in $(ls -1 xx*); do echo $f && orapki wallet add -wallet /tmp/public_wallet -trusted_cert -cert $f -auto_login_only; done    
            rm xx*
       - name: Extract certs from Mozilla CA bundle and add those to the wallet
         run: |
            csplit /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem '/-----BEGIN CERTIFICATE-----/' '{*}' && rm xx00
            ls -lah
-           for f in $(ls -1 xx*); do echo $f && orapki wallet add -wallet /tmp/public_wallet -trusted_cert -cert $f; done    
+           for f in $(ls -1 xx*); do echo $f && orapki wallet add -wallet /tmp/public_wallet -trusted_cert -cert $f -auto_login_only; done    
            rm xx*
       - uses: actions/upload-artifact@v3
         with:
