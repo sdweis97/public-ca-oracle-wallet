@@ -29,7 +29,7 @@ jobs:
       - name: Check JAVA_HOME
         run: ls -lah $JAVA_HOME
       - name: Create new wallet
-        run:  orapki wallet create -wallet tmp_wallet -pwd 'Pass_123' -auto_login
+        run:  orapki wallet create -wallet public_wallet -auto_login_only
       - name: Download Amazon bundle
         run: pwd && curl https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o global-bundle.pem
       - name: List files
@@ -37,12 +37,12 @@ jobs:
       - name: Extract certs from Amazon global bundle and add those to the wallet
         run: |
            csplit global-bundle.pem '/-----BEGIN CERTIFICATE-----/' '{*}' && rm xx00
-           find . -name 'xx*' -type f -exec orapki wallet add -wallet tmp_wallet -trusted_cert -cert {} -pwd 'Pass_123' \;    
+           find . -name 'xx*' -type f -exec orapki wallet add -wallet public_wallet -trusted_cert -cert {} \;    
            rm xx*
       - name: Extract certs from Mozilla CA bundle and add those to the wallet
         run: |
            csplit /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem '/-----BEGIN CERTIFICATE-----/' '{*}' && rm xx00
-           find . -name 'xx*' -type f -exec orapki wallet add -wallet tmp_wallet -trusted_cert -cert {} -pwd 'Pass_123' \;    
+           find . -name 'xx*' -type f -exec orapki wallet add -wallet public_wallet -trusted_cert -cert {} \;    
            rm xx*
       - name: List files
         run: ls -lah
