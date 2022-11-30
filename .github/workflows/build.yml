@@ -50,6 +50,7 @@ jobs:
            ls -lah
            find . -name 'xx*' -type f -exec orapki wallet add -wallet /tmp/public_wallet -trusted_cert -cert {} \;    
            rm xx*
-      - name: List files
-        run: ls -lah
-                  
+      - uses: actions/upload-artifact@v3
+        with:
+          name: wallet
+          path: /tmp/public_wallet
