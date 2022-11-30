@@ -12,6 +12,4 @@ WALLET_LOCATION=
 ```
 
 I did this process by hand, initially, using the Mozilla CA bundle and decided to automate it so a new wallet could be generated as certificates change. 
-This also will use Amazon's global bundle so that RDS databases will be trusted (documented here: https://aws.amazon.com/premiumsupport/knowledge-center/rds-connect-ssl-connection/)
-
-An Oracle wallet must have a password, so I am using Pass_123 here since, for my use case, it doesn't really matter if this is secured. If you fork or use this, consider changing that.
+This also will use Amazon's global bundle so that RDS databases will be trusted (documented here: https://aws.amazon.com/premiumsupport/knowledge-center/rds-connect-ssl-connection/).
