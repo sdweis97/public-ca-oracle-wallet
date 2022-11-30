@@ -28,13 +28,13 @@ jobs:
       - name: Setup Java
         run: |
           curl -L https://github.com/adoptium/temurin11-binaries/releases/download/jdk-11.0.17%2B8/OpenJDK11U-jdk_x64_linux_hotspot_11.0.17_8.tar.gz -o /tmp/OpenJDK11.tar.gz
-          curl -L https://download.oracle.com/otn-pub/otn_software/jdbc/217/ojdbc11-full.tar.gz -o /tmp/ojdbc11-full.tar.gz
+          # curl -L https://download.oracle.com/otn-pub/otn_software/jdbc/217/ojdbc11-full.tar.gz -o /tmp/ojdbc11-full.tar.gz
           tar -xzvf /tmp/OpenJDK11.tar.gz -C /tmp    
-          tar -xzvf /tmp/ojdbc11-full.tar.gz -C /tmp
+          # tar -xzvf /tmp/ojdbc11-full.tar.gz -C /tmp
       - name: Check JAVA_HOME
         run: ls -lah $JAVA_HOME
       - name: Create new wallet
-        run:  orapki wallet create -wallet public_wallet -auto_login_only
+        run:  orapki wallet create -wallet public -pwd 'Pass_123' -auto_login
       - name: Download Amazon bundle
         run: pwd && curl https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o global-bundle.pem
       - name: List files
@@ -42,12 +42,12 @@ jobs:
       - name: Extract certs from Amazon global bundle and add those to the wallet
         run: |
            csplit global-bundle.pem '/-----BEGIN CERTIFICATE-----/' '{*}' && rm xx00
-           find . -name 'xx*' -type f -exec orapki wallet add -wallet public_wallet -trusted_cert -cert {} \;    
+           find . -name 'xx*' -type f -exec orapki wallet add -wallet public_wallet -trusted_cert -cert -pwd 'Pass_123' {} \;    
            rm xx*
       - name: Extract certs from Mozilla CA bundle and add those to the wallet
         run: |
            csplit /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem '/-----BEGIN CERTIFICATE-----/' '{*}' && rm xx00
-           find . -name 'xx*' -type f -exec orapki wallet add -wallet public_wallet -trusted_cert -cert {} \;    
+           find . -name 'xx*' -type f -exec orapki wallet add -wallet public_wallet -trusted_cert -cert -pwd 'Pass_123' {} \;    
            rm xx*
       - name: List files
         run: ls -lah
