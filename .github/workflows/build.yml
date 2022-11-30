@@ -15,6 +15,9 @@ jobs:
     runs-on: ubuntu-latest
     container: 
       image: gvenzl/oracle-xe:21
+      volumes:
+        - /bin/find:/bin/find # Not sure why this is missing but it is
+
     env:
       JAVA_HOME: /tmp/jdk-11.0.17+8/
 
