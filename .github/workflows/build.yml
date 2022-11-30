@@ -14,9 +14,6 @@ jobs:
     runs-on: ubuntu-latest
     container: 
       image: gvenzl/oracle-xe:21-full
-      volumes:
-        - /bin/find:/bin/find # Not sure why this is missing but it is
-
 #     env:
 #       JAVA_HOME: /tmp/jdk-11.0.17+8/
 
@@ -42,13 +39,13 @@ jobs:
         run: |
            csplit global-bundle.pem '/-----BEGIN CERTIFICATE-----/' '{*}' && rm xx00
            ls -lah
-           find . -name 'xx*' -type f -exec orapki wallet add -wallet /tmp/public_wallet -trusted_cert -cert {} \;    
+           for f in $(ls -1 xx*); do echo $f && orapki wallet add -wallet /tmp/public_wallet -trusted_cert -cert $f; done    
            rm xx*
       - name: Extract certs from Mozilla CA bundle and add those to the wallet
         run: |
            csplit /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem '/-----BEGIN CERTIFICATE-----/' '{*}' && rm xx00
            ls -lah
-           find . -name 'xx*' -type f -exec orapki wallet add -wallet /tmp/public_wallet -trusted_cert -cert {} \;    
+           for f in $(ls -1 xx*); do echo $f && orapki wallet add -wallet /tmp/public_wallet -trusted_cert -cert $f; done    
            rm xx*
       - uses: actions/upload-artifact@v3
         with:
