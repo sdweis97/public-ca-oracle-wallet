@@ -12,10 +12,10 @@ jobs:
       image: gvenzl/oracle-xe:21
 
     steps:
-      - name: Work in progress
-        run: pwd && ls && whoami && echo Hello, world!
+      - name: Create temp folder
+        run: mkdir -p /tmp/wallet-build && cd /tmp/wallet-build
       - name: Download Amazon bundle
-        run: curl https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o global-bundle.pem
+        run: pwd && curl https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o global-bundle.pem
       - name: Build a wallet
         run: |
            csplit global-bundle.pem '/-----BEGIN CERTIFICATE-----/' '{*}'
