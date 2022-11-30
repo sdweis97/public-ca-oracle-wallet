@@ -8,7 +8,7 @@ on:
 
 defaults:
  run:
-  working-directory: /tmp/wallet-build
+  working-directory: /tmp/
 
 jobs:
   build:
@@ -17,9 +17,6 @@ jobs:
       image: gvenzl/oracle-xe:21-full
 
     steps:
-      - name: Create temp folder
-        working-directory: /tmp
-        run: mkdir -p /tmp/wallet-build
       - name: Create new wallet
         run:  orapki wallet create -wallet /tmp/public_wallet -auto_login_only
       - name: Download Amazon bundle
