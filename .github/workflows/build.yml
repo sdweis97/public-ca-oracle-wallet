@@ -28,7 +28,9 @@ jobs:
       - name: Setup Java
         run: |
           curl -L https://github.com/adoptium/temurin11-binaries/releases/download/jdk-11.0.17%2B8/OpenJDK11U-jdk_x64_linux_hotspot_11.0.17_8.tar.gz -o /tmp/OpenJDK11.tar.gz
+          curl -L https://download.oracle.com/otn-pub/otn_software/jdbc/217/ojdbc11-full.tar.gz -o /tmp/ojdbc11-full.tar.gz
           tar -xzvf /tmp/OpenJDK11.tar.gz -C /tmp    
+          tar -xzvf /tmp/ojdbc11-full.tar.gz -C /tmp
       - name: Check JAVA_HOME
         run: ls -lah $JAVA_HOME
       - name: Create new wallet
