@@ -13,8 +13,9 @@ defaults:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container: 
-      image: gvenzl/oracle-xe:21-full
+    container:
+      image: truevoly/oracle-12c
+ ##    image: gvenzl/oracle-xe:21-full
 
     steps:
       - name: Create new wallet
