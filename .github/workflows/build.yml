@@ -35,20 +35,127 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         
+      - name: Setup Oracle environment
+        run: |
+          echo "Setting up Oracle environment..."
+          echo "Current user: $(whoami)"
+          echo "Current PATH: $PATH"
+          
+          # Install Java if not present
+          echo "Checking for Java..."
+          if ! java -version 2>/dev/null; then
+            echo "Java not found, attempting to install..."
+            # Try to install OpenJDK
+            if command -v yum >/dev/null 2>&1; then
+              yum install -y java-11-openjdk-headless || echo "Failed to install Java via yum"
+            elif command -v apt-get >/dev/null 2>&1; then
+              apt-get update && apt-get install -y openjdk-11-jre-headless || echo "Failed to install Java via apt"
+            elif command -v microdnf >/dev/null 2>&1; then
+              microdnf install -y java-11-openjdk-headless || echo "Failed to install Java via microdnf"
+            fi
+          fi
+          
+          # Set up Java environment
+          echo "Setting up Java environment..."
+          export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+          
+          # Try different Java locations
+          for java_path in "/usr/lib/jvm/java-11-openjdk-amd64" "/usr/lib/jvm/java-8-openjdk-amd64" "/opt/oracle/product/*/jdk" "/usr/java/latest" "/usr/lib/jvm/default-java" "/usr/lib/jvm/java-11-openjdk" "/usr/lib/jvm/jre-11-openjdk"; do
+            if [ -d "$java_path" ]; then
+              echo "Found Java installation at: $java_path"
+              export JAVA_HOME="$java_path"
+              export PATH="$java_path/bin:$PATH"
+              break
+            fi
+          done
+          
+          echo "JAVA_HOME: $JAVA_HOME"
+          if [ -x "$JAVA_HOME/bin/java" ]; then
+            echo "Java version:"
+            $JAVA_HOME/bin/java -version || echo "Java version check failed"
+          else
+            echo "Searching for Java..."
+            ls -la /usr/lib/jvm/*/bin/java 2>/dev/null || true
+            ls -la /opt/*/jdk*/bin/java 2>/dev/null || true
+            ls -la /usr/bin/java 2>/dev/null || true
+            
+            # Try to use system java if JAVA_HOME setup failed
+            if command -v java >/dev/null 2>&1; then
+              echo "Using system java"
+              java -version
+              export JAVA_HOME=$(dirname $(dirname $(readlink -f $(command -v java))))
+              echo "Detected JAVA_HOME: $JAVA_HOME"
+            fi
+          fi
+          
+          # Set Oracle environment variables
+          export ORACLE_HOME=/opt/oracle/product/18c/dbhomeXE
+          export PATH=$ORACLE_HOME/bin:$JAVA_HOME/bin:$PATH
+          export TNS_ADMIN=$ORACLE_HOME/network/admin
+          
+          # Try different potential Oracle locations
+          for oracle_path in "/opt/oracle/product/18c/dbhomeXE" "/u01/app/oracle/product/18.0.0/dbhome_1" "/opt/oracle"; do
+            if [ -d "$oracle_path" ]; then
+              echo "Found Oracle installation at: $oracle_path"
+              export ORACLE_HOME="$oracle_path"
+              export PATH="$oracle_path/bin:$JAVA_HOME/bin:$PATH"
+              break
+            fi
+          done
+          
+          echo "ORACLE_HOME: $ORACLE_HOME"
+          echo "PATH: $PATH"
+          echo "JAVA_HOME: $JAVA_HOME"
+          
+          # Check for orapki
+          if [ -x "$ORACLE_HOME/bin/orapki" ]; then
+            echo "Found orapki at: $ORACLE_HOME/bin/orapki"
+            $ORACLE_HOME/bin/orapki help 2>&1 | head -5 || echo "orapki help failed"
+          else
+            echo "Searching for orapki..."
+            for search_path in "/opt" "/u01" "/usr" "/"; do
+              echo "Searching in $search_path..."
+              ls -la $search_path/*/bin/orapki 2>/dev/null || true
+              ls -la $search_path/*/*/bin/orapki 2>/dev/null || true
+              ls -la $search_path/*/*/*/bin/orapki 2>/dev/null || true
+            done
+          fi
+          
+          # Verify all required tools are available
+          echo "Verifying required tools..."
+          
+          # Check Java
+          if command -v java >/dev/null 2>&1; then
+            echo "✓ Java found: $(java -version 2>&1 | head -1)"
+          else
+            echo "✗ Java not found in PATH"
+            echo "Current PATH: $PATH"
+            echo "JAVA_HOME: $JAVA_HOME"
+            exit 1
+          fi
+          
+          # Check orapki
+          if command -v orapki >/dev/null 2>&1; then
+            echo "✓ orapki found: $(command -v orapki)"
+          elif [ -x "$ORACLE_HOME/bin/orapki" ]; then
+            echo "✓ orapki found at: $ORACLE_HOME/bin/orapki"
+          else
+            echo "✗ orapki not found"
+            echo "Current PATH: $PATH"
+            echo "ORACLE_HOME: $ORACLE_HOME"
+            exit 1
+          fi
+          
+          # Save environment for subsequent steps
+          echo "JAVA_HOME=$JAVA_HOME" >> $GITHUB_ENV
+          echo "ORACLE_HOME=$ORACLE_HOME" >> $GITHUB_ENV
+          echo "PATH=$ORACLE_HOME/bin:$JAVA_HOME/bin:$PATH" >> $GITHUB_ENV
+          echo "TNS_ADMIN=$ORACLE_HOME/network/admin" >> $GITHUB_ENV
+          
       - name: Setup working directories
         run: |
-          # Ensure proper permissions for GitHub Actions
-          echo "Current user: $(whoami)"
+          echo "Setting up working directories..."
           echo "Current umask: $(umask)"
-          echo "Available commands:"
-          which ls chmod mkdir cp rm curl grep head cat || echo "Some basic commands missing"
-          echo "Available in /bin:"
-          ls /bin/ | head -10 || echo "Cannot list /bin"
-          echo "Available in /usr/bin:"
-          ls /usr/bin/ | head -10 || echo "Cannot list /usr/bin"
-          
-          echo "GitHub workspace permissions:"
-          ls -la $GITHUB_WORKSPACE/ || echo "No access to workspace"
           
           umask 022
           mkdir -p ${{ env.WALLET_DIR }} ${{ env.CERT_DIR }}
@@ -58,22 +165,53 @@ jobs:
       - name: Create new Oracle wallet
         run: |
           echo "Creating Oracle wallet at ${{ env.WALLET_DIR }}"
-          echo "Oracle version info:"
-          orapki help 2>&1 | head -5 || echo "orapki help failed"
           echo "Oracle environment:"
           echo "ORACLE_HOME: $ORACLE_HOME"
+          echo "JAVA_HOME: $JAVA_HOME"
+          echo "PATH: $PATH"
           echo "TNS_ADMIN: $TNS_ADMIN"
           
-          if orapki wallet create -wallet ${{ env.WALLET_DIR }} -auto_login_only; then
+          # Verify Java is available
+          if [ -x "$JAVA_HOME/bin/java" ]; then
+            echo "Java version:"
+            $JAVA_HOME/bin/java -version
+          else
+            echo "ERROR: Java not found at $JAVA_HOME/bin/java"
+            echo "Searching for Java..."
+            ls -la /usr/bin/java /usr/lib/jvm/*/bin/java 2>/dev/null || true
+            exit 1
+          fi
+          
+          # Check if orapki is available
+          if command -v orapki >/dev/null 2>&1; then
+            echo "orapki found in PATH"
+            orapki help 2>&1 | head -5 || echo "orapki help failed"
+          elif [ -x "$ORACLE_HOME/bin/orapki" ]; then
+            echo "Using orapki from ORACLE_HOME: $ORACLE_HOME/bin/orapki"
+            $ORACLE_HOME/bin/orapki help 2>&1 | head -5 || echo "orapki help failed"
+          else
+            echo "ERROR: orapki not found"
+            echo "Searching for Oracle binaries..."
+            ls -la /opt/oracle/*/bin/orapki 2>/dev/null || true
+            ls -la /u01/*/oracle/*/bin/orapki 2>/dev/null || true
+            exit 1
+          fi
+          
+          # Create wallet using full path if needed
+          if command -v orapki >/dev/null 2>&1; then
+            orapki_cmd="orapki"
+          else
+            orapki_cmd="$ORACLE_HOME/bin/orapki"
+          fi
+          
+          if $orapki_cmd wallet create -wallet ${{ env.WALLET_DIR }} -auto_login_only; then
             echo "Wallet created successfully"
             ls -la ${{ env.WALLET_DIR }}
+            
+            # Save orapki command for subsequent steps
+            echo "ORAPKI_CMD=$orapki_cmd" >> $GITHUB_ENV
           else
             echo "ERROR: Failed to create wallet"
-            echo "Checking Oracle environment..."
-            which orapki || echo "orapki not found in PATH"
-            echo "PATH: $PATH"
-            echo "Oracle environment variables:"
-            env | grep -i oracle || echo "No Oracle environment variables"
             exit 1
           fi
           
@@ -157,7 +295,7 @@ jobs:
             if [ -f "$cert" ] && [ -s "$cert" ]; then
               echo "Adding Amazon global certificate: $cert"
               # Capture orapki output to check for specific errors
-              if orapki_output=$(orapki wallet add -wallet ${{ env.WALLET_DIR }} -trusted_cert -cert "$cert" -auto_login_only 2>&1); then
+              if orapki_output=$($ORAPKI_CMD wallet add -wallet ${{ env.WALLET_DIR }} -trusted_cert -cert "$cert" -auto_login_only 2>&1); then
                 cert_count=$((cert_count + 1))
                 echo "✅ Successfully added certificate $cert"
               else
@@ -212,7 +350,7 @@ jobs:
                 cert_count=0
                 for cert in amazon-${region}-*.pem; do
                   if [ -f "$cert" ] && [ -s "$cert" ]; then
-                    if orapki wallet add -wallet ${{ env.WALLET_DIR }} -trusted_cert -cert "$cert" -auto_login_only; then
+                    if $ORAPKI_CMD wallet add -wallet ${{ env.WALLET_DIR }} -trusted_cert -cert "$cert" -auto_login_only; then
                       cert_count=$((cert_count + 1))
                     fi
                   fi
@@ -261,7 +399,7 @@ jobs:
           for cert in mozilla-*.pem; do
             if [ -f "$cert" ] && [ -s "$cert" ]; then
               # Capture orapki output to check for specific errors
-              if orapki_output=$(orapki wallet add -wallet ${{ env.WALLET_DIR }} -trusted_cert -cert "$cert" -auto_login_only 2>&1); then
+              if orapki_output=$($ORAPKI_CMD wallet add -wallet ${{ env.WALLET_DIR }} -trusted_cert -cert "$cert" -auto_login_only 2>&1); then
                 cert_count=$((cert_count + 1))
                 # Show progress every 50 certificates
                 if [ $((cert_count % 50)) -eq 0 ]; then
@@ -306,7 +444,7 @@ jobs:
           ls -la ${{ env.WALLET_DIR }}
           
           echo "Listing trusted certificates in wallet..."
-          if wallet_display=$(orapki wallet display -wallet ${{ env.WALLET_DIR }} 2>&1); then
+          if wallet_display=$($ORAPKI_CMD wallet display -wallet ${{ env.WALLET_DIR }} 2>&1); then
             echo "$wallet_display" | head -20
             
             # Count certificates
@@ -344,7 +482,7 @@ jobs:
           - Amazon RDS Regional Bundles (us-east-1, us-west-2, eu-west-1)
           - Mozilla CA Bundle
           
-          Total Certificates: $(orapki wallet display -wallet ${{ env.WALLET_DIR }} | grep -c "Trusted Certificate" || echo "0")
+          Total Certificates: $($ORAPKI_CMD wallet display -wallet ${{ env.WALLET_DIR }} | grep -c "Trusted Certificate" || echo "0")
           
           Usage:
           Copy the contents of this directory to your Oracle client configuration.
