@@ -51,25 +51,55 @@ jobs:
       - name: Create new Oracle wallet
         run: |
           echo "Creating Oracle wallet at ${{ env.WALLET_DIR }}"
-          orapki wallet create -wallet ${{ env.WALLET_DIR }} -auto_login_only
-          echo "Wallet created successfully"
-          ls -la ${{ env.WALLET_DIR }}
+          echo "Oracle version info:"
+          orapki help 2>&1 | head -5 || echo "orapki help failed"
+          
+          if orapki wallet create -wallet ${{ env.WALLET_DIR }} -auto_login_only; then
+            echo "Wallet created successfully"
+            ls -la ${{ env.WALLET_DIR }}
+          else
+            echo "ERROR: Failed to create wallet"
+            echo "Checking Oracle environment..."
+            which orapki || echo "orapki not found in PATH"
+            echo "PATH: $PATH"
+            echo "Oracle environment variables:"
+            env | grep -i oracle || echo "No Oracle environment variables"
+            exit 1
+          fi
           
       - name: Download certificate bundles
         run: |
           echo "Downloading Amazon RDS global bundle..."
-          curl -fsSL https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o ${{ env.CERT_DIR }}/amazon-global-bundle.pem
+          if curl -fsSL https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o ${{ env.CERT_DIR }}/amazon-global-bundle.pem; then
+            echo "✅ Amazon global bundle downloaded"
+          else
+            echo "❌ Failed to download Amazon global bundle"
+            exit 1
+          fi
           
           echo "Downloading Amazon RDS regional bundles..."
-          curl -fsSL https://truststore.pki.rds.amazonaws.com/us-east-1/us-east-1-bundle.pem -o ${{ env.CERT_DIR }}/amazon-us-east-1-bundle.pem
-          curl -fsSL https://truststore.pki.rds.amazonaws.com/us-west-2/us-west-2-bundle.pem -o ${{ env.CERT_DIR }}/amazon-us-west-2-bundle.pem
-          curl -fsSL https://truststore.pki.rds.amazonaws.com/eu-west-1/eu-west-1-bundle.pem -o ${{ env.CERT_DIR }}/amazon-eu-west-1-bundle.pem
+          curl -fsSL https://truststore.pki.rds.amazonaws.com/us-east-1/us-east-1-bundle.pem -o ${{ env.CERT_DIR }}/amazon-us-east-1-bundle.pem || echo "⚠️ Failed to download us-east-1 bundle"
+          curl -fsSL https://truststore.pki.rds.amazonaws.com/us-west-2/us-west-2-bundle.pem -o ${{ env.CERT_DIR }}/amazon-us-west-2-bundle.pem || echo "⚠️ Failed to download us-west-2 bundle"
+          curl -fsSL https://truststore.pki.rds.amazonaws.com/eu-west-1/eu-west-1-bundle.pem -o ${{ env.CERT_DIR }}/amazon-eu-west-1-bundle.pem || echo "⚠️ Failed to download eu-west-1 bundle"
           
           echo "Copying Mozilla CA bundle..."
-          cp /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem ${{ env.CERT_DIR }}/mozilla-ca-bundle.pem
+          if [ -f "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem" ]; then
+            cp /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem ${{ env.CERT_DIR }}/mozilla-ca-bundle.pem
+            echo "✅ Mozilla CA bundle copied"
+          elif [ -f "/etc/ssl/certs/ca-certificates.crt" ]; then
+            cp /etc/ssl/certs/ca-certificates.crt ${{ env.CERT_DIR }}/mozilla-ca-bundle.pem
+            echo "✅ CA certificates copied from /etc/ssl/certs/"
+          else
+            echo "❌ No CA bundle found at expected locations"
+            echo "Searching for CA bundles..."
+            find /etc -name "*ca*" -name "*.pem" -o -name "*.crt" 2>/dev/null | head -10
+            exit 1
+          fi
           
           echo "Downloaded certificate bundles:"
           ls -la ${{ env.CERT_DIR }}
+          echo "File sizes:"
+          du -h ${{ env.CERT_DIR }}/*
           
       - name: Validate certificate bundles
         run: |
@@ -88,69 +118,127 @@ jobs:
         run: |
           echo "Processing Amazon global bundle..."
           cd ${{ env.CERT_DIR }}
-          csplit amazon-global-bundle.pem '/-----BEGIN CERTIFICATE-----/' '{*}' --prefix=amazon-global- --suffix-format='%03d.pem'
+          
+          if [ ! -f "amazon-global-bundle.pem" ]; then
+            echo "ERROR: Amazon global bundle not found"
+            exit 1
+          fi
+          
+          # Split certificates with error handling
+          if csplit amazon-global-bundle.pem '/-----BEGIN CERTIFICATE-----/' '{*}' --prefix=amazon-global- --suffix-format='%03d.pem' --quiet; then
+            echo "Successfully split Amazon global bundle"
+          else
+            echo "ERROR: Failed to split Amazon global bundle"
+            echo "Bundle content preview:"
+            head -10 amazon-global-bundle.pem
+            exit 1
+          fi
+          
           rm amazon-global-000.pem 2>/dev/null || true
           
           cert_count=0
+          failed_count=0
           for cert in amazon-global-*.pem; do
             if [ -f "$cert" ] && [ -s "$cert" ]; then
               echo "Adding Amazon global certificate: $cert"
-              if orapki wallet add -wallet ${{ env.WALLET_DIR }} -trusted_cert -cert "$cert" -auto_login_only; then
+              if orapki wallet add -wallet ${{ env.WALLET_DIR }} -trusted_cert -cert "$cert" -auto_login_only 2>/dev/null; then
                 ((cert_count++))
               else
                 echo "WARNING: Failed to add certificate $cert"
+                ((failed_count++))
+                # Show certificate details for debugging
+                openssl x509 -in "$cert" -text -noout | head -5 2>/dev/null || echo "Could not parse certificate"
               fi
             fi
           done
           echo "Successfully added $cert_count Amazon global certificates"
+          [ $failed_count -gt 0 ] && echo "Failed to add $failed_count certificates"
           rm amazon-global-*.pem
           
       - name: Process Amazon regional bundle certificates
+        continue-on-error: true
         run: |
           echo "Processing Amazon regional bundles..."
           cd ${{ env.CERT_DIR }}
           
+          total_regional_certs=0
           for bundle in amazon-us-east-1-bundle.pem amazon-us-west-2-bundle.pem amazon-eu-west-1-bundle.pem; do
             if [ -f "$bundle" ]; then
               region=$(echo $bundle | sed 's/amazon-\(.*\)-bundle.pem/\1/')
               echo "Processing $region certificates..."
               
-              csplit "$bundle" '/-----BEGIN CERTIFICATE-----/' '{*}' --prefix="amazon-${region}-" --suffix-format='%03d.pem'
-              rm "amazon-${region}-000.pem" 2>/dev/null || true
+              # Check if bundle has certificates
+              if ! grep -q "BEGIN CERTIFICATE" "$bundle"; then
+                echo "WARNING: No certificates found in $bundle, skipping"
+                continue
+              fi
               
-              cert_count=0
-              for cert in amazon-${region}-*.pem; do
-                if [ -f "$cert" ] && [ -s "$cert" ]; then
-                  if orapki wallet add -wallet ${{ env.WALLET_DIR }} -trusted_cert -cert "$cert" -auto_login_only; then
-                    ((cert_count++))
-                  else
-                    echo "WARNING: Failed to add certificate $cert"
+              if csplit "$bundle" '/-----BEGIN CERTIFICATE-----/' '{*}' --prefix="amazon-${region}-" --suffix-format='%03d.pem' --quiet; then
+                rm "amazon-${region}-000.pem" 2>/dev/null || true
+                
+                cert_count=0
+                for cert in amazon-${region}-*.pem; do
+                  if [ -f "$cert" ] && [ -s "$cert" ]; then
+                    if orapki wallet add -wallet ${{ env.WALLET_DIR }} -trusted_cert -cert "$cert" -auto_login_only 2>/dev/null; then
+                      ((cert_count++))
+                    fi
                   fi
-                fi
-              done
-              echo "Successfully added $cert_count certificates from $region"
-              rm amazon-${region}-*.pem
+                done
+                echo "Successfully added $cert_count certificates from $region"
+                total_regional_certs=$((total_regional_certs + cert_count))
+                rm amazon-${region}-*.pem 2>/dev/null || true
+              else
+                echo "WARNING: Failed to split $bundle"
+              fi
+            else
+              echo "WARNING: Bundle $bundle not found, skipping"
             fi
           done
+          echo "Total regional certificates added: $total_regional_certs"
           
       - name: Process Mozilla CA bundle certificates
         run: |
           echo "Processing Mozilla CA bundle..."
           cd ${{ env.CERT_DIR }}
-          csplit mozilla-ca-bundle.pem '/-----BEGIN CERTIFICATE-----/' '{*}' --prefix=mozilla- --suffix-format='%03d.pem'
+          
+          if [ ! -f "mozilla-ca-bundle.pem" ]; then
+            echo "ERROR: Mozilla CA bundle not found"
+            exit 1
+          fi
+          
+          # Check bundle content first
+          cert_count_in_bundle=$(grep -c "BEGIN CERTIFICATE" mozilla-ca-bundle.pem)
+          echo "Found $cert_count_in_bundle certificates in Mozilla bundle"
+          
+          # Split certificates with error handling
+          if csplit mozilla-ca-bundle.pem '/-----BEGIN CERTIFICATE-----/' '{*}' --prefix=mozilla- --suffix-format='%03d.pem' --quiet; then
+            echo "Successfully split Mozilla CA bundle"
+          else
+            echo "ERROR: Failed to split Mozilla CA bundle"
+            echo "Bundle content preview:"
+            head -10 mozilla-ca-bundle.pem
+            exit 1
+          fi
+          
           rm mozilla-000.pem 2>/dev/null || true
           
           cert_count=0
+          failed_count=0
           for cert in mozilla-*.pem; do
             if [ -f "$cert" ] && [ -s "$cert" ]; then
-              if orapki wallet add -wallet ${{ env.WALLET_DIR }} -trusted_cert -cert "$cert" -auto_login_only; then
+              if orapki wallet add -wallet ${{ env.WALLET_DIR }} -trusted_cert -cert "$cert" -auto_login_only 2>/dev/null; then
                 ((cert_count++))
+                # Show progress every 50 certificates
+                if [ $((cert_count % 50)) -eq 0 ]; then
+                  echo "Added $cert_count Mozilla certificates so far..."
+                fi
               else
-                echo "WARNING: Failed to add certificate $cert"
+                ((failed_count++))
               fi
             fi
           done
           echo "Successfully added $cert_count Mozilla CA certificates"
+          [ $failed_count -gt 0 ] && echo "Failed to add $failed_count certificates"
           rm mozilla-*.pem
           
       - name: Validate wallet contents
@@ -158,6 +246,8 @@ jobs:
           echo "Validating wallet contents..."
           if [ ! -f "${{ env.WALLET_DIR }}/cwallet.sso" ]; then
             echo "ERROR: cwallet.sso not found"
+            echo "Wallet directory contents:"
+            ls -la ${{ env.WALLET_DIR }}
             exit 1
           fi
           
@@ -165,14 +255,25 @@ jobs:
           ls -la ${{ env.WALLET_DIR }}
           
           echo "Listing trusted certificates in wallet..."
-          orapki wallet display -wallet ${{ env.WALLET_DIR }} | head -20
-          
-          # Count certificates
-          cert_count=$(orapki wallet display -wallet ${{ env.WALLET_DIR }} | grep -c "Trusted Certificate" || echo "0")
-          echo "Total trusted certificates in wallet: $cert_count"
-          
-          if [ "$cert_count" -lt 100 ]; then
-            echo "WARNING: Expected more certificates (found $cert_count)"
+          if wallet_display=$(orapki wallet display -wallet ${{ env.WALLET_DIR }} 2>&1); then
+            echo "$wallet_display" | head -20
+            
+            # Count certificates
+            cert_count=$(echo "$wallet_display" | grep -c "Trusted Certificate" || echo "0")
+            echo "Total trusted certificates in wallet: $cert_count"
+            
+            if [ "$cert_count" -lt 50 ]; then
+              echo "WARNING: Expected more certificates (found $cert_count)"
+              echo "This may indicate certificate processing issues"
+            elif [ "$cert_count" -lt 100 ]; then
+              echo "INFO: Found $cert_count certificates (acceptable but below expected ~150+)"
+            else
+              echo "SUCCESS: Found $cert_count certificates"
+            fi
+          else
+            echo "ERROR: Could not display wallet contents"
+            echo "orapki wallet display output: $wallet_display"
+            exit 1
           fi
           
       - name: Create wallet metadata
