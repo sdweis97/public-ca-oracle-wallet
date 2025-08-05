@@ -24,6 +24,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container:
+      # Using Oracle XE 18c slim - if PKI tools are missing, consider switching to:
+      # image: container-registry.oracle.com/database/standard:12.2.0.1
+      # or gvenzl/oracle-xe:18 (full version instead of slim)
       image: gvenzl/oracle-xe:18-slim
       options: --user root
     
@@ -34,6 +37,23 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        
+      - name: Check Oracle installation
+        run: |
+          echo "Checking Oracle installation..."
+          echo "Oracle version:"
+          sqlplus -v 2>/dev/null || echo "sqlplus not available"
+          
+          echo "Oracle directory structure:"
+          ls -la /opt/oracle/ 2>/dev/null || echo "No /opt/oracle directory"
+          
+          echo "Searching for Oracle PKI tools..."
+          find /opt -name "orapki" 2>/dev/null || echo "orapki not found"
+          find /opt -name "*pki*" -type f 2>/dev/null | head -5 || echo "No PKI files found"
+          find /opt -name "*.jar" 2>/dev/null | grep -i pki | head -5 || echo "No PKI JAR files found"
+          
+          echo "Available Oracle binaries:"
+          ls -la /opt/oracle/product/*/bin/ 2>/dev/null | head -10 || echo "No Oracle binaries found"
         
       - name: Setup Oracle environment
         run: |
@@ -273,21 +293,27 @@ jobs:
           if command -v orapki >/dev/null 2>&1; then
             echo "orapki found in PATH"
             # Test orapki with proper environment - run from Oracle bin directory
-            if (cd "$ORACLE_HOME/bin" && CLASSPATH="$CLASSPATH" ./orapki help 2>&1 | head -5); then
+            echo "Testing orapki from Oracle bin directory..."
+            if (cd "$ORACLE_HOME/bin" && CLASSPATH="$CLASSPATH" ./orapki help) >/dev/null 2>&1; then
               echo "✅ orapki is working correctly from Oracle bin directory"
               orapki_working=true
             else
               echo "❌ orapki found but not working from bin directory"
+              echo "Error output:"
+              (cd "$ORACLE_HOME/bin" && CLASSPATH="$CLASSPATH" ./orapki help) 2>&1 | head -5 || true
               orapki_working=false
             fi
           elif [ -x "$ORACLE_HOME/bin/orapki" ]; then
             echo "Using orapki from ORACLE_HOME: $ORACLE_HOME/bin/orapki"
             # Test orapki from its own directory
-            if (cd "$ORACLE_HOME/bin" && ./orapki help 2>&1 | head -5); then
+            echo "Testing orapki from its own directory..."
+            if (cd "$ORACLE_HOME/bin" && ./orapki help) >/dev/null 2>&1; then
               echo "✅ orapki is working correctly from its directory"
               orapki_working=true
             else
               echo "❌ orapki found but not working"
+              echo "Error output:"
+              (cd "$ORACLE_HOME/bin" && ./orapki help) 2>&1 | head -5 || true
               orapki_working=false
             fi
           else
@@ -305,17 +331,53 @@ jobs:
             # Try to run orapki directly with Java if we have classpath
             if [ -n "$CLASSPATH" ]; then
               echo "Attempting to run orapki with explicit classpath..."
-              if java -cp "$CLASSPATH" oracle.security.pki.textui.OraclePKITextUI help 2>&1 | head -5; then
+              echo "CLASSPATH: $CLASSPATH"
+              if java -cp "$CLASSPATH" oracle.security.pki.textui.OraclePKITextUI help >/dev/null 2>&1; then
                 echo "✅ Direct Java execution of orapki is working"
                 orapki_working=true
                 use_java_direct=true
               else
                 echo "❌ Direct Java execution also failed"
+                echo "Error output:"
+                java -cp "$CLASSPATH" oracle.security.pki.textui.OraclePKITextUI help 2>&1 | head -5 || true
               fi
+            else
+              echo "❌ No CLASSPATH available for direct Java execution"
             fi
             
+            # If still not working, try to find and install Oracle wallet manager
             if [ "$orapki_working" = false ]; then
-              echo "ERROR: Cannot get orapki to work with any method"
+              echo "Attempting alternative Oracle wallet approaches..."
+              
+              # Check if Oracle has a different wallet utility
+              for wallet_tool in "owm" "oracle_wallet_manager" "mkstore"; do
+                if command -v "$wallet_tool" >/dev/null 2>&1; then
+                  echo "Found alternative wallet tool: $wallet_tool"
+                  # We could implement alternative approaches here
+                fi
+              done
+              
+              # Try installing additional Oracle packages that might contain orapki
+              echo "Attempting to install missing Oracle PKI components..."
+              if command -v yum >/dev/null 2>&1; then
+                yum list available | grep -i oracle | grep -i pki || true
+                # Try installing if any packages are available
+                yum install -y oracle-instantclient*-tools* 2>/dev/null || echo "No additional Oracle packages available"
+              fi
+              
+              echo "❌ Cannot get orapki to work with any method"
+              echo "This might be due to Oracle XE container limitations"
+              echo "Oracle XE may not include the PKI utilities required for wallet management"
+              echo "Available Oracle files:"
+              find "$ORACLE_HOME" -name "*pki*" -o -name "*wallet*" -o -name "*crypto*" 2>/dev/null | head -10 || true
+              
+              # As a last resort, suggest manual wallet creation
+              echo ""
+              echo "WORKAROUND: The Oracle XE container appears to be missing PKI components."
+              echo "You may need to:"
+              echo "1. Use Oracle Standard/Enterprise Edition instead of XE"
+              echo "2. Install Oracle Client with PKI tools"
+              echo "3. Create wallets manually using a full Oracle installation"
               exit 1
             fi
           fi
