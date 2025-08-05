@@ -14,7 +14,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: truevoly/oracle-12c
+      image: absolutapps/oracle-12c-ee
+      options: --user root
  ##    image: gvenzl/oracle-xe:21-full
 
     steps:
