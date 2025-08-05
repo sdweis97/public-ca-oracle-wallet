@@ -1,42 +1,206 @@
-name: Build Wallet
+name: Build Oracle Wallet with Public CA Certificates
 
 on:
   push:
+    branches: [ main, develop ]
   pull_request:
+    branches: [ main ]
   release:
+    types: [ published ]
   workflow_dispatch:
+  schedule:
+    # Rebuild monthly to get updated certificates
+    #- cron: '0 2 1 * *'
+
+env:
+  WALLET_DIR: /tmp/public_wallet
+  CERT_DIR: /tmp/certs
 
 defaults:
- run:
-  working-directory: /tmp/
+  run:
+    working-directory: /tmp/
 
 jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: gvenzl/oracle-xe:18-full 
- ##    image: gvenzl/oracle-xe:21-full
-
+      image: gvenzl/oracle-xe:21-full
+    
+    permissions:
+      contents: read
+      
     steps:
-      - name: Create new wallet
-        run:  orapki wallet create -wallet /tmp/public_wallet -auto_login_only
-      - name: Download Amazon bundle
-        run: pwd && curl https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o global-bundle.pem
-      - name: List files
-        run: ls -lah
-      - name: Extract certs from Amazon global bundle and add those to the wallet
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Setup working directories
         run: |
-           csplit global-bundle.pem '/-----BEGIN CERTIFICATE-----/' '{*}' && rm xx00
-           ls -lah
-           for f in $(ls -1 xx*); do echo $f && orapki wallet add -wallet /tmp/public_wallet -trusted_cert -cert $f -auto_login_only; done    
-           rm xx*
-      - name: Extract certs from Mozilla CA bundle and add those to the wallet
+          mkdir -p ${{ env.WALLET_DIR }} ${{ env.CERT_DIR }}
+          ls -la /tmp/
+          
+      - name: Create new Oracle wallet
         run: |
-           csplit /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem '/-----BEGIN CERTIFICATE-----/' '{*}' && rm xx00
-           ls -lah
-           for f in $(ls -1 xx*); do echo $f && orapki wallet add -wallet /tmp/public_wallet -trusted_cert -cert $f -auto_login_only; done    
-           rm xx*
-      - uses: actions/upload-artifact@v4
+          echo "Creating Oracle wallet at ${{ env.WALLET_DIR }}"
+          orapki wallet create -wallet ${{ env.WALLET_DIR }} -auto_login_only
+          echo "Wallet created successfully"
+          ls -la ${{ env.WALLET_DIR }}
+          
+      - name: Download certificate bundles
+        run: |
+          echo "Downloading Amazon RDS global bundle..."
+          curl -fsSL https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o ${{ env.CERT_DIR }}/amazon-global-bundle.pem
+          
+          echo "Downloading Amazon RDS regional bundles..."
+          curl -fsSL https://truststore.pki.rds.amazonaws.com/us-east-1/us-east-1-bundle.pem -o ${{ env.CERT_DIR }}/amazon-us-east-1-bundle.pem
+          curl -fsSL https://truststore.pki.rds.amazonaws.com/us-west-2/us-west-2-bundle.pem -o ${{ env.CERT_DIR }}/amazon-us-west-2-bundle.pem
+          curl -fsSL https://truststore.pki.rds.amazonaws.com/eu-west-1/eu-west-1-bundle.pem -o ${{ env.CERT_DIR }}/amazon-eu-west-1-bundle.pem
+          
+          echo "Copying Mozilla CA bundle..."
+          cp /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem ${{ env.CERT_DIR }}/mozilla-ca-bundle.pem
+          
+          echo "Downloaded certificate bundles:"
+          ls -la ${{ env.CERT_DIR }}
+          
+      - name: Validate certificate bundles
+        run: |
+          echo "Validating certificate bundles..."
+          for bundle in ${{ env.CERT_DIR }}/*.pem; do
+            echo "Validating $(basename $bundle)..."
+            if ! grep -q "BEGIN CERTIFICATE" "$bundle"; then
+              echo "ERROR: No certificates found in $bundle"
+              exit 1
+            fi
+            cert_count=$(grep -c "BEGIN CERTIFICATE" "$bundle")
+            echo "  Found $cert_count certificates"
+          done
+          
+      - name: Process Amazon global bundle certificates
+        run: |
+          echo "Processing Amazon global bundle..."
+          cd ${{ env.CERT_DIR }}
+          csplit amazon-global-bundle.pem '/-----BEGIN CERTIFICATE-----/' '{*}' --prefix=amazon-global- --suffix-format='%03d.pem'
+          rm amazon-global-000.pem 2>/dev/null || true
+          
+          cert_count=0
+          for cert in amazon-global-*.pem; do
+            if [ -f "$cert" ] && [ -s "$cert" ]; then
+              echo "Adding Amazon global certificate: $cert"
+              if orapki wallet add -wallet ${{ env.WALLET_DIR }} -trusted_cert -cert "$cert" -auto_login_only; then
+                ((cert_count++))
+              else
+                echo "WARNING: Failed to add certificate $cert"
+              fi
+            fi
+          done
+          echo "Successfully added $cert_count Amazon global certificates"
+          rm amazon-global-*.pem
+          
+      - name: Process Amazon regional bundle certificates
+        run: |
+          echo "Processing Amazon regional bundles..."
+          cd ${{ env.CERT_DIR }}
+          
+          for bundle in amazon-us-east-1-bundle.pem amazon-us-west-2-bundle.pem amazon-eu-west-1-bundle.pem; do
+            if [ -f "$bundle" ]; then
+              region=$(echo $bundle | sed 's/amazon-\(.*\)-bundle.pem/\1/')
+              echo "Processing $region certificates..."
+              
+              csplit "$bundle" '/-----BEGIN CERTIFICATE-----/' '{*}' --prefix="amazon-${region}-" --suffix-format='%03d.pem'
+              rm "amazon-${region}-000.pem" 2>/dev/null || true
+              
+              cert_count=0
+              for cert in amazon-${region}-*.pem; do
+                if [ -f "$cert" ] && [ -s "$cert" ]; then
+                  if orapki wallet add -wallet ${{ env.WALLET_DIR }} -trusted_cert -cert "$cert" -auto_login_only; then
+                    ((cert_count++))
+                  else
+                    echo "WARNING: Failed to add certificate $cert"
+                  fi
+                fi
+              done
+              echo "Successfully added $cert_count certificates from $region"
+              rm amazon-${region}-*.pem
+            fi
+          done
+          
+      - name: Process Mozilla CA bundle certificates
+        run: |
+          echo "Processing Mozilla CA bundle..."
+          cd ${{ env.CERT_DIR }}
+          csplit mozilla-ca-bundle.pem '/-----BEGIN CERTIFICATE-----/' '{*}' --prefix=mozilla- --suffix-format='%03d.pem'
+          rm mozilla-000.pem 2>/dev/null || true
+          
+          cert_count=0
+          for cert in mozilla-*.pem; do
+            if [ -f "$cert" ] && [ -s "$cert" ]; then
+              if orapki wallet add -wallet ${{ env.WALLET_DIR }} -trusted_cert -cert "$cert" -auto_login_only; then
+                ((cert_count++))
+              else
+                echo "WARNING: Failed to add certificate $cert"
+              fi
+            fi
+          done
+          echo "Successfully added $cert_count Mozilla CA certificates"
+          rm mozilla-*.pem
+          
+      - name: Validate wallet contents
+        run: |
+          echo "Validating wallet contents..."
+          if [ ! -f "${{ env.WALLET_DIR }}/cwallet.sso" ]; then
+            echo "ERROR: cwallet.sso not found"
+            exit 1
+          fi
+          
+          echo "Wallet files:"
+          ls -la ${{ env.WALLET_DIR }}
+          
+          echo "Listing trusted certificates in wallet..."
+          orapki wallet display -wallet ${{ env.WALLET_DIR }} | head -20
+          
+          # Count certificates
+          cert_count=$(orapki wallet display -wallet ${{ env.WALLET_DIR }} | grep -c "Trusted Certificate" || echo "0")
+          echo "Total trusted certificates in wallet: $cert_count"
+          
+          if [ "$cert_count" -lt 100 ]; then
+            echo "WARNING: Expected more certificates (found $cert_count)"
+          fi
+          
+      - name: Create wallet metadata
+        run: |
+          cat > ${{ env.WALLET_DIR }}/wallet-info.txt << EOF
+          Oracle Wallet Build Information
+          ===============================
+          Build Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          Build ID: ${{ github.run_id }}
+          Git SHA: ${{ github.sha }}
+          
+          Certificate Sources:
+          - Amazon RDS Global Bundle
+          - Amazon RDS Regional Bundles (us-east-1, us-west-2, eu-west-1)
+          - Mozilla CA Bundle
+          
+          Total Certificates: $(orapki wallet display -wallet ${{ env.WALLET_DIR }} | grep -c "Trusted Certificate" || echo "0")
+          
+          Usage:
+          Copy the contents of this directory to your Oracle client configuration.
+          Update your sqlnet.ora file to point to the wallet location.
+          EOF
+          
+          echo "Wallet metadata created:"
+          cat ${{ env.WALLET_DIR }}/wallet-info.txt
+          
+      - name: Upload wallet artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: wallet
-          path: /tmp/public_wallet
+          name: oracle-public-ca-wallet-${{ github.run_id }}
+          path: ${{ env.WALLET_DIR }}
+          retention-days: 90
+          if-no-files-found: error
+          
+      - name: Upload wallet for release
+        if: github.event_name == 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: oracle-public-ca-wallet-release
+          path: ${{ env.WALLET_DIR }}
+          retention-days: 365

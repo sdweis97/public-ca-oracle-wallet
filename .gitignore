@@ -1,0 +1,38 @@
+# Oracle wallet files (should not be committed)
+*.sso
+*.p12
+cwallet.sso
+ewallet.p12
+
+# Certificate files
+*.pem
+*.crt
+*.cer
+
+# Temporary files
+*.tmp
+*.temp
+xx*
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build artifacts
+/tmp/
+/build/
+/dist/
