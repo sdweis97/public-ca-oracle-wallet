@@ -15,7 +15,6 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: absolutapps/oracle-12c-ee
-      options: --user root
  ##    image: gvenzl/oracle-xe:21-full
 
     steps:
