@@ -55,19 +55,33 @@ jobs:
             fi
           fi
           
-          # Set up Java environment
-          echo "Setting up Java environment..."
-          export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+          # Set up Java environment for Oracle
+          echo "Setting up Java environment for Oracle..."
           
-          # Try different Java locations
-          for java_path in "/usr/lib/jvm/java-11-openjdk-amd64" "/usr/lib/jvm/java-8-openjdk-amd64" "/opt/oracle/product/*/jdk" "/usr/java/latest" "/usr/lib/jvm/default-java" "/usr/lib/jvm/java-11-openjdk" "/usr/lib/jvm/jre-11-openjdk"; do
-            if [ -d "$java_path" ]; then
-              echo "Found Java installation at: $java_path"
-              export JAVA_HOME="$java_path"
-              export PATH="$java_path/bin:$PATH"
+          # First, try to find Oracle's bundled Java (preferred for orapki)
+          oracle_java_found=false
+          for oracle_java_path in "/opt/oracle/product/*/jdk" "/opt/oracle/product/*/jre" "/opt/oracle/jdk" "/opt/oracle/jre" "/u01/app/oracle/product/*/jdk"; do
+            if [ -d "$oracle_java_path" ] && [ -x "$oracle_java_path/bin/java" ]; then
+              echo "Found Oracle Java at: $oracle_java_path"
+              export JAVA_HOME="$oracle_java_path"
+              export PATH="$oracle_java_path/bin:$PATH"
+              oracle_java_found=true
               break
             fi
           done
+          
+          # If no Oracle Java found, use system Java but we'll need to set classpath later
+          if [ "$oracle_java_found" = false ]; then
+            echo "Oracle Java not found, using system Java..."
+            for java_path in "/usr/lib/jvm/java-11-openjdk-amd64" "/usr/lib/jvm/java-8-openjdk-amd64" "/usr/java/latest" "/usr/lib/jvm/default-java" "/usr/lib/jvm/java-11-openjdk" "/usr/lib/jvm/jre-11-openjdk"; do
+              if [ -d "$java_path" ] && [ -x "$java_path/bin/java" ]; then
+                echo "Found system Java at: $java_path"
+                export JAVA_HOME="$java_path"
+                export PATH="$java_path/bin:$PATH"
+                break
+              fi
+            done
+          fi
           
           echo "JAVA_HOME: $JAVA_HOME"
           if [ -x "$JAVA_HOME/bin/java" ]; then
@@ -106,6 +120,51 @@ jobs:
           echo "ORACLE_HOME: $ORACLE_HOME"
           echo "PATH: $PATH"
           echo "JAVA_HOME: $JAVA_HOME"
+          
+          # Set up Oracle classpath for orapki
+          echo "Setting up Oracle classpath..."
+          export CLASSPATH=""
+          if [ -d "$ORACLE_HOME" ]; then
+            echo "Searching for Oracle JAR files in $ORACLE_HOME..."
+            
+            # Find Oracle JAR files needed for orapki (broader search)
+            oracle_jars=""
+            for jar_pattern in "orapki.jar" "ojpse.jar" "osdt_core.jar" "osdt_cert.jar" "jcmFIPS.jar" "oraclepki.jar" "oracle-pki.jar"; do
+              jar_file=$(find "$ORACLE_HOME" -name "$jar_pattern" 2>/dev/null | head -1)
+              if [ -n "$jar_file" ]; then
+                echo "Found Oracle JAR: $jar_file"
+                if [ -z "$oracle_jars" ]; then
+                  oracle_jars="$jar_file"
+                else
+                  oracle_jars="$oracle_jars:$jar_file"
+                fi
+              fi
+            done
+            
+            # If specific JARs not found, search for all JARs in jlib directory
+            if [ -z "$oracle_jars" ] && [ -d "$ORACLE_HOME/jlib" ]; then
+              echo "Searching in jlib directory..."
+              for jar_file in "$ORACLE_HOME/jlib"/*.jar; do
+                if [ -f "$jar_file" ]; then
+                  echo "Found JAR in jlib: $jar_file"
+                  if [ -z "$oracle_jars" ]; then
+                    oracle_jars="$jar_file"
+                  else
+                    oracle_jars="$oracle_jars:$jar_file"
+                  fi
+                fi
+              done
+            fi
+            
+            if [ -n "$oracle_jars" ]; then
+              export CLASSPATH="$oracle_jars"
+              echo "Set CLASSPATH: $CLASSPATH"
+            else
+              echo "WARNING: Oracle JAR files not found, listing available JARs..."
+              find "$ORACLE_HOME" -name "*.jar" 2>/dev/null | head -10 || true
+              echo "Will attempt to run orapki without explicit classpath..."
+            fi
+          fi
           
           # Check for orapki
           if [ -x "$ORACLE_HOME/bin/orapki" ]; then
@@ -151,6 +210,7 @@ jobs:
           echo "ORACLE_HOME=$ORACLE_HOME" >> $GITHUB_ENV
           echo "PATH=$ORACLE_HOME/bin:$JAVA_HOME/bin:$PATH" >> $GITHUB_ENV
           echo "TNS_ADMIN=$ORACLE_HOME/network/admin" >> $GITHUB_ENV
+          echo "CLASSPATH=$CLASSPATH" >> $GITHUB_ENV
           
       - name: Setup working directories
         run: |
@@ -170,6 +230,7 @@ jobs:
           echo "JAVA_HOME: $JAVA_HOME"
           echo "PATH: $PATH"
           echo "TNS_ADMIN: $TNS_ADMIN"
+          echo "CLASSPATH: $CLASSPATH"
           
           # Verify Java is available
           if [ -x "$JAVA_HOME/bin/java" ]; then
@@ -182,13 +243,28 @@ jobs:
             exit 1
           fi
           
-          # Check if orapki is available
+          # Check if orapki is available and working
           if command -v orapki >/dev/null 2>&1; then
             echo "orapki found in PATH"
-            orapki help 2>&1 | head -5 || echo "orapki help failed"
+            # Test orapki with proper environment
+            if CLASSPATH="$CLASSPATH" orapki help 2>&1 | head -5; then
+              echo "✅ orapki is working correctly"
+            else
+              echo "❌ orapki found but not working, trying with explicit classpath..."
+              # Try to run orapki directly with Java
+              if [ -n "$CLASSPATH" ]; then
+                echo "Attempting to run orapki with explicit classpath..."
+                java -cp "$CLASSPATH" oracle.security.pki.textui.OraclePKITextUI help 2>&1 | head -5 || echo "Direct Java execution failed"
+              fi
+            fi
           elif [ -x "$ORACLE_HOME/bin/orapki" ]; then
             echo "Using orapki from ORACLE_HOME: $ORACLE_HOME/bin/orapki"
-            $ORACLE_HOME/bin/orapki help 2>&1 | head -5 || echo "orapki help failed"
+            if CLASSPATH="$CLASSPATH" $ORACLE_HOME/bin/orapki help 2>&1 | head -5; then
+              echo "✅ orapki is working correctly"
+            else
+              echo "❌ orapki found but not working"
+              exit 1
+            fi
           else
             echo "ERROR: orapki not found"
             echo "Searching for Oracle binaries..."
@@ -199,12 +275,13 @@ jobs:
           
           # Create wallet using full path if needed
           if command -v orapki >/dev/null 2>&1; then
-            orapki_cmd="orapki"
+            orapki_cmd="env CLASSPATH=\"$CLASSPATH\" orapki"
           else
-            orapki_cmd="$ORACLE_HOME/bin/orapki"
+            orapki_cmd="env CLASSPATH=\"$CLASSPATH\" $ORACLE_HOME/bin/orapki"
           fi
           
-          if $orapki_cmd wallet create -wallet ${{ env.WALLET_DIR }} -auto_login_only; then
+          echo "Creating wallet with command: $orapki_cmd"
+          if eval $orapki_cmd wallet create -wallet ${{ env.WALLET_DIR }} -auto_login_only; then
             echo "Wallet created successfully"
             ls -la ${{ env.WALLET_DIR }}
             
@@ -212,6 +289,11 @@ jobs:
             echo "ORAPKI_CMD=$orapki_cmd" >> $GITHUB_ENV
           else
             echo "ERROR: Failed to create wallet"
+            echo "Trying alternative approach with direct Java execution..."
+            if [ -n "$CLASSPATH" ]; then
+              echo "Attempting direct Java execution..."
+              java -cp "$CLASSPATH" oracle.security.pki.textui.OraclePKITextUI wallet create -wallet ${{ env.WALLET_DIR }} -auto_login_only || echo "Direct Java execution also failed"
+            fi
             exit 1
           fi
           
