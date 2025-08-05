@@ -18,7 +18,7 @@ jobs:
 
     steps:
       - name: Create new wallet
-        run:  orapki wallet create -wallet /tmp/public_wallet -auto_login_only
+        run:  orapki wallet create -wallet /tmp/public_wallet -pwd Oracle123 -auto_login_only
       - name: Download Amazon bundle
         run: pwd && curl https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o global-bundle.pem
       - name: List files
