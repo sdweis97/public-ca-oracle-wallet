@@ -8,7 +8,7 @@ on:
   release:
     types: [ published ]
   workflow_dispatch:
-  schedule:
+  #schedule:
     # Rebuild monthly to get updated certificates
     #- cron: '0 2 1 * *'
 
