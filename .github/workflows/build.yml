@@ -25,9 +25,11 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: gvenzl/oracle-xe:21-full
+      options: --user root
     
     permissions:
-      contents: write
+      contents: read
+      actions: write
       
     steps:
       - name: Checkout repository
@@ -35,7 +37,15 @@ jobs:
         
       - name: Setup working directories
         run: |
+          # Ensure proper permissions for GitHub Actions
+          echo "Current user: $(whoami)"
+          echo "Current umask: $(umask)"
+          echo "GitHub workspace permissions:"
+          ls -la $GITHUB_WORKSPACE/ || echo "No access to workspace"
+          
+          umask 022
           mkdir -p ${{ env.WALLET_DIR }} ${{ env.CERT_DIR }}
+          chmod 755 ${{ env.WALLET_DIR }} ${{ env.CERT_DIR }}
           ls -la /tmp/
           
       - name: Create new Oracle wallet
@@ -167,6 +177,9 @@ jobs:
           
       - name: Create wallet metadata
         run: |
+          # Set proper permissions before creating metadata
+          chmod 644 ${{ env.WALLET_DIR }}/*.sso ${{ env.WALLET_DIR }}/*.p12 2>/dev/null || true
+          
           cat > ${{ env.WALLET_DIR }}/wallet-info.txt << EOF
           Oracle Wallet Build Information
           ===============================
@@ -186,8 +199,18 @@ jobs:
           Update your sqlnet.ora file to point to the wallet location.
           EOF
           
+          chmod 644 ${{ env.WALLET_DIR }}/wallet-info.txt
           echo "Wallet metadata created:"
           cat ${{ env.WALLET_DIR }}/wallet-info.txt
+          
+      - name: Prepare wallet for upload
+        run: |
+          echo "Setting final permissions for wallet files..."
+          find ${{ env.WALLET_DIR }} -type f -exec chmod 644 {} \;
+          find ${{ env.WALLET_DIR }} -type d -exec chmod 755 {} \;
+          
+          echo "Final wallet contents:"
+          ls -la ${{ env.WALLET_DIR }}
           
       - name: Upload wallet artifact
         uses: actions/upload-artifact@v4
