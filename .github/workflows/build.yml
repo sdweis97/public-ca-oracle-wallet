@@ -353,66 +353,156 @@ jobs:
               
               # Check if Oracle has a different wallet utility
               wallet_tool_found=""
-              for wallet_tool in "mkstore" "owm" "oracle_wallet_manager"; do
+              echo "Searching for alternative Oracle wallet tools..."
+              
+              # Check common wallet tools in PATH
+              for wallet_tool in "mkstore" "owm" "oracle_wallet_manager" "walletcli"; do
                 if command -v "$wallet_tool" >/dev/null 2>&1; then
-                  echo "Found alternative wallet tool: $wallet_tool"
+                  echo "Found alternative wallet tool in PATH: $wallet_tool"
                   wallet_tool_found="$wallet_tool"
                   break
                 fi
               done
               
+              # If not found in PATH, search in Oracle directories
+              if [ -z "$wallet_tool_found" ] && [ -d "$ORACLE_HOME" ]; then
+                echo "Searching for wallet tools in Oracle directories..."
+                for tool_name in "mkstore" "owm"; do
+                  tool_path=$(find "$ORACLE_HOME" -name "$tool_name" -type f -executable 2>/dev/null | head -1)
+                  if [ -n "$tool_path" ]; then
+                    echo "Found wallet tool: $tool_path"
+                    wallet_tool_found="$tool_name"
+                    # Add to PATH for subsequent use
+                    export PATH="$(dirname "$tool_path"):$PATH"
+                    break
+                  fi
+                done
+              fi
+              
               if [ -n "$wallet_tool_found" ]; then
                 echo "✅ Will use $wallet_tool_found for wallet management"
+                echo "Tool location: $(command -v "$wallet_tool_found")"
+                echo "Tool version/help:"
+                "$wallet_tool_found" -help 2>&1 | head -5 || "$wallet_tool_found" --help 2>&1 | head -5 || echo "No help available"
                 
                 # Test the alternative tool
                 case "$wallet_tool_found" in
                   "mkstore")
                     echo "Testing mkstore..."
-                    if mkstore -wrl /tmp/test_wallet -create >/dev/null 2>&1; then
+                    # mkstore requires a password, use a temporary one for testing
+                    # Create a temporary wallet to test mkstore functionality
+                    if echo "testpass123" | mkstore -wrl /tmp/test_wallet -create >/dev/null 2>&1; then
                       echo "✅ mkstore is working"
                       rm -rf /tmp/test_wallet 2>/dev/null || true
                       orapki_working=true
                       use_mkstore=true
                     else
-                      echo "❌ mkstore test failed"
+                      echo "❌ mkstore test failed, trying without password input..."
+                      # Try alternative mkstore syntax
+                      if mkstore -wrl /tmp/test_wallet -create -nologo >/dev/null 2>&1; then
+                        echo "✅ mkstore is working (alternative syntax)"
+                        rm -rf /tmp/test_wallet 2>/dev/null || true
+                        orapki_working=true
+                        use_mkstore=true
+                      else
+                        echo "❌ mkstore test failed with both methods"
+                        echo "Testing mkstore version and available commands..."
+                        echo "Command: mkstore -help"
+                        mkstore -help 2>&1 | head -10 || echo "Cannot get mkstore help"
+                        echo "Command: mkstore (no args)"
+                        mkstore 2>&1 | head -5 || echo "Cannot run mkstore without args"
+                        echo "Available Oracle binaries in bin directory:"
+                        ls -la "$ORACLE_HOME/bin/" | grep -E "(mkstore|owm|orapki|wallet)" || echo "No wallet tools found"
+                      fi
                     fi
                     ;;
                   "owm")
                     echo "Testing owm..."
+                    echo "OWM location: $(command -v owm 2>/dev/null || echo 'not in PATH')"
+                    
                     # owm might need different parameters, try basic help
-                    if owm -help >/dev/null 2>&1 || owm --help >/dev/null 2>&1; then
-                      echo "✅ owm is available"
+                    if owm -help >/dev/null 2>&1; then
+                      echo "✅ owm is available (-help works)"
+                      orapki_working=true
+                      use_owm=true
+                    elif owm --help >/dev/null 2>&1; then
+                      echo "✅ owm is available (--help works)"
+                      orapki_working=true
+                      use_owm=true
+                    elif owm >/dev/null 2>&1; then
+                      echo "✅ owm is available (basic command works)"
                       orapki_working=true
                       use_owm=true
                     else
                       echo "❌ owm test failed"
+                      echo "Testing owm with different approaches..."
+                      echo "Command: owm -version"
+                      owm -version 2>&1 | head -3 || echo "Cannot get owm version"
+                      echo "Command: owm (no args)"
+                      owm 2>&1 | head -5 || echo "Cannot run owm without args"
                     fi
                     ;;
                 esac
               fi
               
               if [ "$orapki_working" = false ]; then
-                # Try installing additional Oracle packages that might contain orapki
+                echo "❌ No working Oracle wallet tool found"
+                echo ""
+                echo "DEBUGGING INFORMATION:"
+                echo "Oracle Home: $ORACLE_HOME"
+                echo "Available Oracle binaries:"
+                ls -la "$ORACLE_HOME/bin/" | grep -E "(orapki|mkstore|owm)" || echo "No wallet binaries found"
+                echo ""
+                echo "Testing available wallet tools manually:"
+                
+                # Test each tool individually with maximum verbosity
+                for test_tool in orapki mkstore owm; do
+                  echo "=== Testing $test_tool ==="
+                  if command -v "$test_tool" >/dev/null 2>&1; then
+                    tool_path=$(command -v "$test_tool")
+                    echo "Location: $tool_path"
+                    echo "Permissions: $(ls -la "$tool_path")"
+                    echo "Running: $test_tool (no args)"
+                    "$test_tool" 2>&1 | head -10 || echo "Failed to run $test_tool"
+                    echo "Running: $test_tool -help"
+                    "$test_tool" -help 2>&1 | head -10 || echo "No -help for $test_tool"
+                  else
+                    echo "$test_tool not found in PATH"
+                  fi
+                  echo ""
+                done
+                
+                echo "Oracle installation analysis:"
+                echo "ORACLE_HOME contents:"
+                ls -la "$ORACLE_HOME/" 2>/dev/null | head -10 || echo "Cannot list ORACLE_HOME"
+                echo ""
+                echo "Oracle version info:"
+                "$ORACLE_HOME/bin/sqlplus" -v 2>/dev/null || echo "Cannot get Oracle version"
+                echo ""
+                echo "Available Oracle files related to PKI/wallet:"
+                find "$ORACLE_HOME" -name "*pki*" -o -name "*wallet*" -o -name "*crypto*" 2>/dev/null | head -15 || true
+                echo ""
+                
+                # Try installing additional Oracle packages that might contain tools
                 echo "Attempting to install missing Oracle PKI components..."
                 if command -v yum >/dev/null 2>&1; then
-                  yum list available | grep -i oracle | grep -i pki || true
+                  echo "Available Oracle packages:"
+                  yum list available 2>/dev/null | grep -i oracle | grep -E "(pki|wallet|crypto)" || echo "No Oracle PKI packages available"
                   # Try installing if any packages are available
-                  yum install -y oracle-instantclient*-tools* 2>/dev/null || echo "No additional Oracle packages available"
+                  yum install -y oracle-instantclient*-tools* 2>/dev/null || echo "No additional Oracle packages could be installed"
                 fi
                 
-                echo "❌ Cannot get any Oracle wallet tool to work"
-                echo "This might be due to Oracle XE container limitations"
-                echo "Oracle XE may not include the PKI utilities required for wallet management"
-                echo "Available Oracle files:"
-                find "$ORACLE_HOME" -name "*pki*" -o -name "*wallet*" -o -name "*crypto*" 2>/dev/null | head -10 || true
-                
-                # As a last resort, suggest manual wallet creation
                 echo ""
-                echo "WORKAROUND: The Oracle XE container appears to be missing PKI components."
-                echo "You may need to:"
+                echo "❌ FINAL RESULT: Cannot get any Oracle wallet tool to work"
+                echo "This is likely due to Oracle XE container limitations"
+                echo "Oracle XE may not include the PKI utilities required for wallet management"
+                echo ""
+                echo "WORKAROUND OPTIONS:"
                 echo "1. Use Oracle Standard/Enterprise Edition instead of XE"
-                echo "2. Install Oracle Client with PKI tools"
-                echo "3. Create wallets manually using a full Oracle installation"
+                echo "2. Use a different container image with full Oracle client tools"
+                echo "3. Install Oracle Instant Client with PKI tools"
+                echo "4. Create wallets manually using a full Oracle installation"
+                echo "5. Use alternative SSL/TLS certificate management approaches"
                 exit 1
               fi
             fi
@@ -438,16 +528,41 @@ jobs:
             # Use mkstore for wallet creation
             echo "Using mkstore for wallet creation"
             
+            # mkstore requires a password for wallet creation
+            # For auto-login wallets, we can use a temporary password
+            wallet_password="TempWalletPass123"
+            
             # mkstore syntax: mkstore -wrl <wallet_location> -create
-            if mkstore -wrl ${{ env.WALLET_DIR }} -create; then
+            # Create the wallet with password first
+            if echo "$wallet_password" | mkstore -wrl ${{ env.WALLET_DIR }} -create; then
               echo "Wallet created successfully with mkstore"
+              
+              # For auto-login functionality, create auto-login file
+              if echo "$wallet_password" | mkstore -wrl ${{ env.WALLET_DIR }} -createSSO; then
+                echo "Auto-login wallet created successfully"
+              else
+                echo "WARNING: Could not create auto-login wallet, but basic wallet exists"
+              fi
+              
               ls -la ${{ env.WALLET_DIR }}
-              # Save mkstore command for subsequent steps
-              echo "ORAPKI_CMD=mkstore -wrl" >> $GITHUB_ENV
+              # Save mkstore command for subsequent steps (include password handling)
+              echo "WALLET_PASSWORD=$wallet_password" >> $GITHUB_ENV
+              echo "ORAPKI_CMD=echo \"\$WALLET_PASSWORD\" | mkstore -wrl" >> $GITHUB_ENV
               echo "WALLET_TOOL=mkstore" >> $GITHUB_ENV
             else
               echo "ERROR: Failed to create wallet with mkstore"
-              exit 1
+              echo "Trying alternative mkstore approaches..."
+              
+              # Try without password input (some mkstore versions may work differently)
+              if mkstore -wrl ${{ env.WALLET_DIR }} -create -nologo; then
+                echo "Wallet created successfully with mkstore (no password)"
+                ls -la ${{ env.WALLET_DIR }}
+                echo "ORAPKI_CMD=mkstore -wrl" >> $GITHUB_ENV
+                echo "WALLET_TOOL=mkstore" >> $GITHUB_ENV
+              else
+                echo "ERROR: All mkstore wallet creation attempts failed"
+                exit 1
+              fi
             fi
           elif [ "$use_owm" = true ]; then
             # Use Oracle Wallet Manager
@@ -574,7 +689,12 @@ jobs:
             case "${WALLET_TOOL:-orapki}" in
               "mkstore")
                 # mkstore syntax: mkstore -wrl <wallet_location> -importcert -cert <cert_file>
-                mkstore -wrl "$wallet_dir" -importcert -cert "$cert_file"
+                # mkstore may require password even for trusted cert import
+                if [ -n "${WALLET_PASSWORD:-}" ]; then
+                  echo "$WALLET_PASSWORD" | mkstore -wrl "$wallet_dir" -importcert -cert "$cert_file"
+                else
+                  mkstore -wrl "$wallet_dir" -importcert -cert "$cert_file"
+                fi
                 ;;
               "owm")
                 # owm syntax may vary, try common patterns
@@ -751,7 +871,12 @@ jobs:
             case "${WALLET_TOOL:-orapki}" in
               "mkstore")
                 # mkstore syntax: mkstore -wrl <wallet_location> -list
-                mkstore -wrl "$wallet_dir" -list
+                # Try with password first, then without
+                if [ -n "${WALLET_PASSWORD:-}" ]; then
+                  echo "$WALLET_PASSWORD" | mkstore -wrl "$wallet_dir" -list 2>/dev/null || mkstore -wrl "$wallet_dir" -list
+                else
+                  mkstore -wrl "$wallet_dir" -list
+                fi
                 ;;
               "owm")
                 # owm might have different syntax for listing
