@@ -149,30 +149,39 @@ jobs:
           
           cert_count=0
           failed_count=0
+          duplicate_count=0
           for cert in amazon-global-*.pem; do
             if [ -f "$cert" ] && [ -s "$cert" ]; then
               echo "Adding Amazon global certificate: $cert"
-              # Use explicit success/failure handling
-              if orapki wallet add -wallet ${{ env.WALLET_DIR }} -trusted_cert -cert "$cert" -auto_login_only; then
+              # Capture orapki output to check for specific errors
+              if orapki_output=$(orapki wallet add -wallet ${{ env.WALLET_DIR }} -trusted_cert -cert "$cert" -auto_login_only 2>&1); then
                 cert_count=$((cert_count + 1))
                 echo "✅ Successfully added certificate $cert"
               else
-                failed_count=$((failed_count + 1))
-                echo "⚠️ WARNING: Failed to add certificate $cert"
-                # Show certificate details for debugging
-                openssl x509 -in "$cert" -text -noout | head -5 2>/dev/null || echo "Could not parse certificate"
+                if echo "$orapki_output" | grep -q "PKI-04003.*already present"; then
+                  duplicate_count=$((duplicate_count + 1))
+                  echo "ℹ️ Certificate $cert already exists (skipping)"
+                else
+                  failed_count=$((failed_count + 1))
+                  echo "⚠️ WARNING: Failed to add certificate $cert"
+                  echo "Error: $orapki_output"
+                fi
               fi
             fi
           done
-          echo "Successfully added $cert_count Amazon global certificates"
+          echo "Successfully added $cert_count new Amazon global certificates"
+          if [ $duplicate_count -gt 0 ]; then
+            echo "Skipped $duplicate_count duplicate certificates"
+          fi
           if [ $failed_count -gt 0 ]; then
-            echo "Failed to add $failed_count certificates (this is often normal)"
+            echo "Failed to add $failed_count certificates"
           fi
           rm amazon-global-*.pem
           
-          # Ensure we have at least some certificates
-          if [ $cert_count -eq 0 ]; then
-            echo "ERROR: No Amazon global certificates were added"
+          # Ensure we have at least some certificates (counting new + duplicates as success)
+          total_processed=$((cert_count + duplicate_count))
+          if [ $total_processed -eq 0 ]; then
+            echo "ERROR: No Amazon global certificates were processed successfully"
             exit 1
           fi
           
@@ -245,28 +254,38 @@ jobs:
           
           cert_count=0
           failed_count=0
+          duplicate_count=0
           for cert in mozilla-*.pem; do
             if [ -f "$cert" ] && [ -s "$cert" ]; then
-              if orapki wallet add -wallet ${{ env.WALLET_DIR }} -trusted_cert -cert "$cert" -auto_login_only; then
+              # Capture orapki output to check for specific errors
+              if orapki_output=$(orapki wallet add -wallet ${{ env.WALLET_DIR }} -trusted_cert -cert "$cert" -auto_login_only 2>&1); then
                 cert_count=$((cert_count + 1))
                 # Show progress every 50 certificates
                 if [ $((cert_count % 50)) -eq 0 ]; then
                   echo "Added $cert_count Mozilla certificates so far..."
                 fi
               else
-                failed_count=$((failed_count + 1))
+                if echo "$orapki_output" | grep -q "PKI-04003.*already present"; then
+                  duplicate_count=$((duplicate_count + 1))
+                else
+                  failed_count=$((failed_count + 1))
+                fi
               fi
             fi
           done
-          echo "Successfully added $cert_count Mozilla CA certificates"
+          echo "Successfully added $cert_count new Mozilla CA certificates"
+          if [ $duplicate_count -gt 0 ]; then
+            echo "Skipped $duplicate_count duplicate certificates"
+          fi
           if [ $failed_count -gt 0 ]; then
-            echo "Failed to add $failed_count certificates (this is often normal)"
+            echo "Failed to add $failed_count certificates"
           fi
           rm mozilla-*.pem
           
-          # Ensure we have at least some certificates
-          if [ $cert_count -eq 0 ]; then
-            echo "ERROR: No Mozilla CA certificates were added"
+          # Ensure we have at least some certificates (counting new + duplicates as success)
+          total_processed=$((cert_count + duplicate_count))
+          if [ $total_processed -eq 0 ]; then
+            echo "ERROR: No Mozilla CA certificates were processed successfully"
             exit 1
           fi
           
