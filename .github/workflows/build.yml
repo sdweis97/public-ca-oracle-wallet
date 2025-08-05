@@ -40,6 +40,13 @@ jobs:
           # Ensure proper permissions for GitHub Actions
           echo "Current user: $(whoami)"
           echo "Current umask: $(umask)"
+          echo "Available commands:"
+          which ls chmod mkdir cp rm curl grep head cat || echo "Some basic commands missing"
+          echo "Available in /bin:"
+          ls /bin/ | head -10 || echo "Cannot list /bin"
+          echo "Available in /usr/bin:"
+          ls /usr/bin/ | head -10 || echo "Cannot list /usr/bin"
+          
           echo "GitHub workspace permissions:"
           ls -la $GITHUB_WORKSPACE/ || echo "No access to workspace"
           
@@ -89,17 +96,21 @@ jobs:
           elif [ -f "/etc/ssl/certs/ca-certificates.crt" ]; then
             cp /etc/ssl/certs/ca-certificates.crt ${{ env.CERT_DIR }}/mozilla-ca-bundle.pem
             echo "✅ CA certificates copied from /etc/ssl/certs/"
+          elif [ -f "/etc/ssl/certs/ca-bundle.crt" ]; then
+            cp /etc/ssl/certs/ca-bundle.crt ${{ env.CERT_DIR }}/mozilla-ca-bundle.pem
+            echo "✅ CA certificates copied from /etc/ssl/certs/ca-bundle.crt"
           else
             echo "❌ No CA bundle found at expected locations"
             echo "Searching for CA bundles..."
-            find /etc -name "*ca*" -name "*.pem" -o -name "*.crt" 2>/dev/null | head -10
+            ls /etc/ssl/certs/ 2>/dev/null | head -10 || echo "Cannot list /etc/ssl/certs/"
+            ls /etc/pki/ 2>/dev/null | head -10 || echo "Cannot list /etc/pki/"
             exit 1
           fi
           
           echo "Downloaded certificate bundles:"
           ls -la ${{ env.CERT_DIR }}
           echo "File sizes:"
-          du -h ${{ env.CERT_DIR }}/*
+          ls -lh ${{ env.CERT_DIR }}/* || echo "Cannot show file sizes"
           
       - name: Validate certificate bundles
         run: |
@@ -325,8 +336,18 @@ jobs:
       - name: Prepare wallet for upload
         run: |
           echo "Setting final permissions for wallet files..."
-          find ${{ env.WALLET_DIR }} -type f -exec chmod 644 {} \;
-          find ${{ env.WALLET_DIR }} -type d -exec chmod 755 {} \;
+          # Use basic commands instead of find (which may not be available)
+          chmod 644 ${{ env.WALLET_DIR }}/* 2>/dev/null || true
+          chmod 755 ${{ env.WALLET_DIR }} 2>/dev/null || true
+          
+          # Alternative approach using ls and xargs if available
+          if command -v ls >/dev/null 2>&1; then
+            for file in ${{ env.WALLET_DIR }}/*; do
+              if [ -f "$file" ]; then
+                chmod 644 "$file" || true
+              fi
+            done
+          fi
           
           echo "Final wallet contents:"
           ls -la ${{ env.WALLET_DIR }}
