@@ -35,7 +35,7 @@ jobs:
            ls -lah
            for f in $(ls -1 xx*); do echo $f && orapki wallet add -wallet /tmp/public_wallet -trusted_cert -cert $f -auto_login_only; done    
            rm xx*
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: wallet
           path: /tmp/public_wallet
