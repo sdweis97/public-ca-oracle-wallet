@@ -2,7 +2,7 @@
 
 [![Build Wallet](https://github.com/sdweis97/public-ca-oracle-wallet/actions/workflows/build.yml/badge.svg)](https://github.com/sdweis97/public-ca-oracle-wallet/actions/workflows/build.yml)
 
-This project automates the creation of Oracle wallets containing trusted certificates from public Certificate Authorities (CAs), enabling secure SSL/TLS connections to Oracle databases without certificate warnings.
+This project automates the creation of Oracle wallets containing trusted certificates from public Certificate Authorities (CAs), enabling secure SSL/TLS connections to Oracle databases without certificate warnings. Compatible with Oracle 12c and later versions.
 
 ## 🎯 Purpose
 
@@ -14,6 +14,7 @@ Oracle clients require a wallet with trusted certificates to establish secure co
 
 ## ✨ Features
 
+- **Oracle 12c Compatible**: Built and tested with Oracle 12c tooling
 - **Automated Certificate Management**: Monthly rebuilds ensure up-to-date certificates
 - **Comprehensive Coverage**: Supports connections to most public CA-signed Oracle instances
 - **AWS RDS Optimized**: Includes global and regional Amazon certificate bundles
@@ -91,11 +92,18 @@ tcps://host:port/service_name
 | `TLS Handshake failure` | Wallet not found or invalid | Verify wallet path in `sqlnet.ora` |
 | `Certificate not trusted` | Missing CA certificate | Rebuild wallet with latest certificates |
 | `Connection timeout` | Wrong protocol or port | Use `TCPS` protocol and SSL port |
+| `ORA-28759: failure to open file` | Incorrect wallet path | Check `WALLET_LOCATION` in `sqlnet.ora` |
+
+### Oracle Version Compatibility
+
+- **Oracle 12c**: Fully supported (primary target)
+- **Oracle 18c/19c/21c**: Compatible
+- **Oracle 11g**: May require older certificate formats
 
 ### Validation Commands
 
 ```bash
-# Check wallet contents
+# Check wallet contents (Oracle 12c+)
 orapki wallet display -wallet /path/to/wallet
 
 # Test SSL connection

@@ -24,7 +24,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: gvenzl/oracle-xe:21-full
+      image: gvenzl/oracle-xe:18-slim
       options: --user root
     
     permissions:
@@ -60,6 +60,9 @@ jobs:
           echo "Creating Oracle wallet at ${{ env.WALLET_DIR }}"
           echo "Oracle version info:"
           orapki help 2>&1 | head -5 || echo "orapki help failed"
+          echo "Oracle environment:"
+          echo "ORACLE_HOME: $ORACLE_HOME"
+          echo "TNS_ADMIN: $TNS_ADMIN"
           
           if orapki wallet create -wallet ${{ env.WALLET_DIR }} -auto_login_only; then
             echo "Wallet created successfully"
@@ -346,6 +349,8 @@ jobs:
           Usage:
           Copy the contents of this directory to your Oracle client configuration.
           Update your sqlnet.ora file to point to the wallet location.
+          
+          Compatible with Oracle 12c and later versions.
           EOF
           
           chmod 644 ${{ env.WALLET_DIR }}/wallet-info.txt

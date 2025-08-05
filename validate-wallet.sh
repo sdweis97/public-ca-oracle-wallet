@@ -2,14 +2,15 @@
 
 # Oracle Wallet Validation Script
 # This script validates that an Oracle wallet contains the expected certificates
+# Compatible with Oracle 12c and later versions
 
 set -e
 
 WALLET_DIR="${1:-./public_wallet}"
 MIN_CERTS="${2:-100}"
 
-echo "Oracle Wallet Validation"
-echo "======================="
+echo "Oracle Wallet Validation (Oracle 12c Compatible)"
+echo "================================================"
 echo "Wallet Directory: $WALLET_DIR"
 echo "Minimum Expected Certificates: $MIN_CERTS"
 echo ""
